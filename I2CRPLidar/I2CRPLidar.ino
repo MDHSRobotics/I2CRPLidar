@@ -43,16 +43,17 @@
  */
 
 // This sketch code is based on the RPLIDAR driver library provided by RoboPeak
-#include <RPLidar.h>
+//#include <RPLidar.h>
 #include <Wire.h>
 
 
 // You need to create an driver instance 
-RPLidar lidar;
+//RPLidar lidar;
 
 #define SLAVE_ADDRESS 0x41
-#define STATUS_I2C_DATA_READY       0x41
-#define STATUS_I2C_DATA_NOT_READY   0x00
+#define STATUS_I2C_DATA_READY             0x41
+#define STATUS_I2C_DATA_READY_LAST_SET    0xC1
+#define STATUS_I2C_DATA_NOT_READY         0x00
 #define LOOP_DELAY_DEFAULT          50       // Wait 50us, need to assess correct loop delay
 
 /********* REGISTER DEFINITIONS **********/
@@ -95,13 +96,15 @@ RPLidar lidar;
 #define REGISTER_SIZE READ_REGISTER_SIZE + 3*I2C_WORD_SIZE
 #define TEMP_REGISTER_SIZE REGISTER_SIZE - I2C_WORD_SIZE
 
+#define MODE_PENDING 0
+#define MODE_STREAMING 1
+#define MODE_SIMULATION 2
 
 /********* I/O PIN DEFINITIONS **********/
 #define SLAVE_STATUS_LED 13
 #define RPLIDAR_MOTOR 3
 
 /********* COMMANDS *********************/
-#define LED_COMMAND 0x4C00
 
 /********* Global  Variables  ***********/
 
@@ -114,6 +117,7 @@ long previousMillis = 0;        // will store last timestamp
 unsigned char currentPoint = 0;
 unsigned int scanCount = 0;
 bool isScanning = false;
+unsigned char mode = MODE_PENDING;
 
 //commands can be sent from the host to the slave
 //a read command has a 1 byte argument that indicates where in the register we want to read from
@@ -150,6 +154,8 @@ void setup() {
   registerMap[0] = STATUS_I2C_DATA_NOT_READY;
   setupI2C();
   setupPins();
+  mode = MODE_PENDING;
+  printMode();
   // bind the RPLIDAR driver to the arduino hardware serial
 //  lidar.begin(Serial);
 //  
@@ -176,6 +182,21 @@ void setup() {
   Serial.println(x1);
 }
 
+void printMode(){
+  Serial.print("mode: ");
+  switch(mode){
+    case MODE_PENDING:
+      Serial.print("pending...");
+      break;
+    case MODE_STREAMING:
+      Serial.print("streaming...");
+      break;
+    case MODE_SIMULATION:
+      Serial.print("simulation...");
+      break;
+  }
+  Serial.println();
+}
 
 void  setupPins(){
   Serial.println("Setting up pins");
@@ -252,7 +273,9 @@ void requestEvent(){
     newDataAvailable = false;
     registerMap[0] = STATUS_I2C_DATA_NOT_READY;
   }
-
+  if(receivedCommands[0]==MODE_ADDRESS){
+    
+  }
 }
 
 void receiveEvent(int bytesReceived){
@@ -319,11 +342,15 @@ void loop() {
     previousMillis = currentMillis;
   }
   if(isScanning){
-    Serial.print("reg status:  ");
-    Serial.print(registerMap[0]);
-    Serial.print("\t");
-    Serial.println(registerMapTemp[0]);
-    if(registerMapTemp[0]==STATUS_I2C_DATA_READY && registerMap[0]==STATUS_I2C_DATA_NOT_READY){
+    readPoint();
+  }
+
+
+//    Serial.print("reg status:  ");
+//    Serial.print(registerMap[0]);
+//    Serial.print("\t");
+//    Serial.println(registerMapTemp[0]);
+    if((registerMapTemp[0]==STATUS_I2C_DATA_READY || registerMapTemp[0]==STATUS_I2C_DATA_READY_LAST_SET) && registerMap[0]==STATUS_I2C_DATA_NOT_READY){
       Serial.println("swapping registers ...");
       //temp buffer ready to be swapped with register
       memcpy(registerMap,registerMapTemp,TEMP_REGISTER_SIZE);
@@ -332,8 +359,7 @@ void loop() {
       currentPoint = 0;
       Serial.println("data set ready");
     }
-    readPoint();
-  }
+
 //  delayMicroseconds(LOOP_DELAY_DEFAULT);                      
 //  if (IS_OK(lidar.waitPoint())) {
 //    float distance = lidar.getCurrentPoint().distance; //distance value in mm unit
@@ -466,6 +492,7 @@ bool nextPoint(){
 
   float angle = (float)pointCount + START_ANGLE;
   if(angle>=MAX_ANGLE){
+    registerMapTemp[0] = STATUS_I2C_DATA_READY_LAST_SET;
     pointCount = 0;
     return false;
   }
